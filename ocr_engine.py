@@ -10,7 +10,7 @@ from typing import Optional, Any
 import easyocr
 
 import config
-from utils import does_person_block_board, preprocess_for_ocr, resize_keep_aspect_ratio
+from utils import does_person_block_board, preprocess_for_ocr, resize_keep_aspect_ratio, is_diagram_caption
 
 
 @dataclass
@@ -26,8 +26,18 @@ class OCRFrameResult:
 
 def _is_garbage(text):
     text = text.strip()
+    
+    if is_diagram_caption(text):
+        return False
+        
     if len(text) < config.OCR_MIN_TEXT_LENGTH:
         return True
+
+    # Reject lines with less than 2 alphabetic characters for normal OCR notes
+    alpha_count = sum(1 for c in text if c.isalpha())
+    if alpha_count < 2:
+        return True
+
     if not any(c.isalnum() for c in text):
         return True
     if "`" in text:
@@ -35,7 +45,7 @@ def _is_garbage(text):
 
     valid_chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789 =+-*/()[]{}<>;,._?$%'"
     valid_count = sum(1 for c in text if c in valid_chars)
-    if valid_count / len(text) < 0.85:
+    if valid_count / max(1, len(text)) < 0.85:
         return True
 
     words = re.findall(r'\b[a-zA-Z0-9]+\b', text.lower())
@@ -116,6 +126,7 @@ class OCREngine:
         self._confirm_buf = collections.deque(maxlen=config.OCR_CONFIRMATION_FRAMES)
         self._saved_lines = collections.deque(maxlen=200)
         self.latest_candidate = ""
+        self.last_diagram_save_time = 0.0
 
     def clear_confirm_buffer(self):
         self._confirm_buf.clear()
@@ -152,7 +163,7 @@ class OCREngine:
         return color_path, bw_path
 
     def _is_already_saved(self, line):
-        return any(_similarity(line, saved) >= 0.75 for saved in self._saved_lines)
+        return any(_similarity(line, saved) >= 0.92 for saved in self._saved_lines)
 
     def _confirmed_lines(self, candidate_lines):
         confirmed = []
@@ -277,9 +288,23 @@ class OCREngine:
         if not confirmed:
             return make_result(msg="Lines not yet confirmed across frames", roi_img=chosen_img)
 
-        new_lines = [l for l in confirmed if not self._is_already_saved(l)]
+        new_lines = []
+        is_diagram = any(is_diagram_caption(l) for l in confirmed)
+        current_time = time.time()
+        
+        bypass_dedupe = is_diagram and (current_time - self.last_diagram_save_time > 15.0)
+        
+        for l in confirmed:
+            if bypass_dedupe or not self._is_already_saved(l):
+                new_lines.append(l)
+
         if not new_lines:
             return make_result(msg="All confirmed lines already saved", roi_img=chosen_img)
+
+        if is_diagram and bypass_dedupe:
+            self.last_diagram_save_time = current_time
+        elif is_diagram and new_lines:
+            self.last_diagram_save_time = current_time
 
         self._saved_lines.extend(new_lines)
         self._confirm_buf.clear()

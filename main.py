@@ -16,7 +16,7 @@ from tkinter.scrolledtext import ScrolledText
 from PIL import Image, ImageTk
 
 import config
-from utils import does_person_block_board, get_absolute_roi, resize_keep_aspect_ratio
+from utils import does_person_block_board, get_absolute_roi, resize_keep_aspect_ratio, is_diagram_caption
 from tracker import ActivityTracker
 from ocr_engine import OCREngine, OCRFrameResult
 
@@ -44,17 +44,6 @@ def open_file_safe(path):
             subprocess.run(['xdg-open', path])
     except Exception as e:
         print(f"Failed to open image: {e}")
-
-
-def is_diagram_caption(text):
-    if not text:
-        return True
-    text = text.strip()
-    if len(text) < 25:
-        return True
-    if re.match(r'^(figure|fig\.?|diagram)\s*[\d\.]+', text, re.IGNORECASE):
-        return True
-    return False
 
 
 class ThreadedCamera:
@@ -271,7 +260,11 @@ class YOLOTrackerThread:
             
             current_time = time.time()
             if not is_stable:
-                self.stable_start_time = None
+                if self.stable_start_time is not None:
+                    self.stable_start_time = None
+                    if hasattr(self.shared_state, 'ocr_thread'):
+                        self.shared_state.ocr_thread.clear_confirm_buffer()
+                
                 msg = "Teacher blocking" if is_blocked else "Scene unstable"
                 with self.shared_state.lock:
                     self.shared_state.status_msg = msg
@@ -374,6 +367,9 @@ class OCRWorkerThread:
                 self.shared_state.ocr_time = ocr_duration
                 self.shared_state.ocr_busy = False
                 
+    def clear_confirm_buffer(self):
+        self.ocr.clear_confirm_buffer()
+
     def clear_buffers(self):
         self.ocr.clear_confirm_buffer()
         self.ocr.clear_saved_lines()
@@ -744,6 +740,7 @@ def main():
     shared_state = SharedState()
     yolo_t = YOLOTrackerThread(cap, shared_state)
     ocr_t = OCRWorkerThread(shared_state)
+    shared_state.ocr_thread = ocr_t
 
     ui = WhiteboardDigitizerUI(cap, shared_state, yolo_t, ocr_t)
     ui.run()

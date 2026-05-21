@@ -3,6 +3,15 @@ import cv2
 import numpy as np
 import config
 
+import re
+
+def is_diagram_caption(text):
+    if not text:
+        return False
+    text = text.strip()
+    if re.match(r'^(figure|fig\.?|diagram)\s*[\d\.]+', text, re.IGNORECASE):
+        return True
+    return False
 
 def calculate_center(bbox):
     """Calculate the center point of a bounding box. bbox: [x1, y1, x2, y2]"""
