@@ -4,6 +4,17 @@ import collections
 from utils import calculate_center, calculate_distance
 import config
 
+import torch
+import warnings
+warnings.filterwarnings('ignore', category=FutureWarning)
+
+_original_torch_load = torch.load
+def _patched_load(*args, **kwargs):
+    kwargs['weights_only'] = False
+    return _original_torch_load(*args, **kwargs)
+torch.load = _patched_load
+
+
 class ActivityTracker:
     def __init__(self, model_path='yolov8n.pt'):
         # Load the YOLOv8 model for tracking (default: n for CPU performance)
