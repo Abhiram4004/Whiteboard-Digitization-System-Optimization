@@ -21,7 +21,7 @@ MOVEMENT_THRESHOLD = 15.0      # Minimum movement distance to be considered "Act
 STABILITY_THRESHOLD = 10.0     # Max average scene movement to allow OCR (scene must be stable)
 BOARD_CHANGE_THRESHOLD = 8.0   # Max visual difference score to consider the board unchanged
 SMOOTHING_WINDOW = 5           # Number of frames to calculate rolling average of movement
-BOARD_STABLE_SECONDS = 2.0     # Duration in seconds the board must remain stable before starting OCR checks
+BOARD_STABLE_SECONDS = 1.0     # Duration in seconds the board must remain stable before starting OCR checks
 
 # OCR Configuration
 PROCESS_OCR_INTERVAL = 30      # Fallback frame interval for OCR checks
