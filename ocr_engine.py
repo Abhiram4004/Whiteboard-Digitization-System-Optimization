@@ -137,7 +137,7 @@ class OCREngine:
         if not os.path.exists(config.SNAPSHOTS_DIR):
             os.makedirs(config.SNAPSHOTS_DIR)
 
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S_%f')
         color_path = os.path.join(config.SNAPSHOTS_DIR, f"{timestamp}.png")
         bw_path = os.path.join(config.SNAPSHOTS_DIR, f"{timestamp}_cleaned.png")
 

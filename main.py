@@ -136,7 +136,6 @@ class SharedState:
         self.ocr_request_trigger = threading.Event()
         self.manual_snapshot_trigger = threading.Event()
         
-        # New Atomic State
         self.note_entries = []
         self.latest_snapshot_path = None
         self.active_ocr_job_id = None
@@ -253,7 +252,8 @@ class YOLOTrackerThread:
             timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             new_logs = [{'timestamp': timestamp, 'person_id': m['person_id'], 'movement': m['movement'], 'status': m['status']} for m in metrics]
             
-            is_blocked = any(does_person_block_board(m['bbox'], config.WHITEBOARD_ROI) for m in metrics)
+            roi_px = get_absolute_roi(config.WHITEBOARD_ROI, config.RESIZE_DIM[0], config.RESIZE_DIM[1])
+            is_blocked = any(does_person_block_board(m['bbox'], roi_px) for m in metrics)
             is_stable = (scene_movement < config.STABILITY_THRESHOLD) and (not is_blocked)
             
             yolo_duration = time.time() - start_time
@@ -318,9 +318,8 @@ class OCRWorkerThread:
     def run(self):
         while self.running:
             triggered = self.shared_state.ocr_request_trigger.wait(timeout=0.5)
-            manual = self.shared_state.manual_snapshot_trigger.is_set()
             
-            if not triggered and not manual:
+            if not triggered:
                 continue
                 
             with self.shared_state.lock:
@@ -330,7 +329,6 @@ class OCRWorkerThread:
                 job_id = self.shared_state.active_ocr_job_id
                 
                 self.shared_state.ocr_request_trigger.clear()
-                self.shared_state.manual_snapshot_trigger.clear()
                 
             if frame is None:
                 with self.shared_state.lock:
@@ -351,29 +349,22 @@ class OCRWorkerThread:
 
             # process_frame now returns a strict OCRFrameResult dataclass
             res: OCRFrameResult = self.ocr.process_frame(frame, high_res_roi, high_res_bboxes)
-            
-            if manual:
-                if not res.color_snapshot_path:
-                    color_path, bw_path = self.ocr.capture_snapshot(frame, high_res_roi)
-                    res.color_snapshot_path = color_path
-                    res.cleaned_snapshot_path = bw_path
-                res.status_msg = "Manual snapshot captured."
                 
             ocr_duration = time.time() - start_time
             
             with self.shared_state.lock:
                 # Discard stale OCR results
-                if not manual and self.shared_state.active_ocr_job_id != job_id:
+                if self.shared_state.active_ocr_job_id != job_id:
                     self.shared_state.ocr_busy = False
                     continue
 
-                if res.text or (manual and res.color_snapshot_path):
+                if res.text:
                     self.shared_state.add_note_entry(
                         text=res.text,
                         color_path=res.color_snapshot_path,
                         bw_path=res.cleaned_snapshot_path,
                         timestamp=res.timestamp,
-                        source="MANUAL" if manual else "OCR"
+                        source="OCR"
                     )
 
                 if res.roi_image is not None:
@@ -507,9 +498,19 @@ class WhiteboardDigitizerUI:
     def manual_snapshot(self):
         ret, frame = self.cap.read()
         if ret:
+            orig_h, orig_w = frame.shape[:2]
+            high_res_roi = get_absolute_roi(config.WHITEBOARD_ROI, orig_w, orig_h)
+            color_path, bw_path = self.ocr_thread.ocr.capture_snapshot(frame, high_res_roi)
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self.shared_state.add_note_entry(
+                text="[Diagram/sketch captured - see snapshot]",
+                color_path=color_path,
+                bw_path=bw_path,
+                timestamp=timestamp,
+                source="MANUAL"
+            )
             with self.shared_state.lock:
-                self.shared_state.ocr_request_frame = frame.copy()
-                self.shared_state.manual_snapshot_trigger.set()
+                self.shared_state.status_msg = "Manual snapshot captured."
         messagebox.showinfo("Snapshot", "Snapshot capture triggered.")
 
     def open_roi_dialog(self):
@@ -566,7 +567,9 @@ class WhiteboardDigitizerUI:
             html_content.append(f"<h3>[{note['timestamp']}]</h3>")
             
             if note['text']:
-                html_content.append(f"<pre style='white-space: pre-wrap; font-family: monospace;'>{note['text']}</pre>")
+                import html
+                escaped = html.escape(note['text'])
+                html_content.append(f"<pre style='white-space: pre-wrap; font-family: monospace;'>{escaped}</pre>")
                 
             if note['color_snapshot_path']:
                 rel_path = os.path.relpath(note['color_snapshot_path'], os.path.dirname(path))
@@ -662,12 +665,14 @@ class WhiteboardDigitizerUI:
             latest_snap_path = self.shared_state.latest_snapshot_path
 
         # Render new UI notes iteratively
+        new_note_rendered = False
         while self.rendered_note_count < len(entries_copy):
             self._render_single_note(entries_copy[self.rendered_note_count])
             self.rendered_note_count += 1
+            new_note_rendered = True
             
         # Draw Latest Board Snapshot (Bottom Panel)
-        if latest_snap_path != self.current_snapshot_path:
+        if latest_snap_path != self.current_snapshot_path or new_note_rendered:
             self.current_snapshot_path = latest_snap_path
             cw, ch = max(100, self.snap_canvas.winfo_width()), max(100, self.snap_canvas.winfo_height())
             if self.current_snapshot_path:
