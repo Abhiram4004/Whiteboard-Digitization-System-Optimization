@@ -243,7 +243,19 @@ class YOLOTrackerThread:
             
             roi_px = get_absolute_roi(config.WHITEBOARD_ROI, config.RESIZE_DIM[0], config.RESIZE_DIM[1])
             is_blocked = any(does_person_block_board(m['bbox'], roi_px) for m in metrics)
-            is_stable = (scene_movement < config.STABILITY_THRESHOLD) and (not is_blocked)
+            
+            board_change_score = 0.0
+            rx1, ry1, rx2, ry2 = roi_px
+            if rx2 > rx1 and ry2 > ry1:
+                current_roi = process_frame[ry1:ry2, rx1:rx2]
+                current_roi_gray = cv2.cvtColor(current_roi, cv2.COLOR_BGR2GRAY)
+                if hasattr(self, 'prev_roi_gray') and self.prev_roi_gray is not None:
+                    if self.prev_roi_gray.shape == current_roi_gray.shape:
+                        diff = cv2.absdiff(current_roi_gray, self.prev_roi_gray)
+                        board_change_score = diff.mean()
+                self.prev_roi_gray = current_roi_gray
+                
+            is_stable = (scene_movement < config.STABILITY_THRESHOLD) and (not is_blocked) and (board_change_score < config.BOARD_CHANGE_THRESHOLD)
             
             yolo_duration = time.time() - start_time
 
